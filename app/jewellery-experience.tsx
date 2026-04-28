@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-const FRAME_COUNT = 227;
 const SCROLL_HEIGHT_DESKTOP = 500;
 const SCROLL_HEIGHT_MOBILE = 620;
 const MOBILE_BREAKPOINT = 768;
@@ -11,8 +10,8 @@ const PRODUCT_SCALE_DESKTOP = 0.74;
 const PRODUCT_SCALE_MOBILE = 0.62;
 const PRODUCT_SHIFT_DESKTOP = 0.2;
 const PRODUCT_SHIFT_MOBILE = 0.08;
-const FINALE_CENTER_BIAS_DESKTOP = 0.038;
-const FINALE_CENTER_BIAS_MOBILE = 0.02;
+const FINALE_CENTER_BIAS_DESKTOP = 0;
+const FINALE_CENTER_BIAS_MOBILE = 0;
 
 type StoryPanel = {
   id: string;
@@ -81,7 +80,13 @@ function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
-function mapRange(value: number, inMin: number, inMax: number, outMin: number, outMax: number) {
+function mapRange(
+  value: number,
+  inMin: number,
+  inMax: number,
+  outMin: number,
+  outMax: number,
+) {
   if (inMax === inMin) {
     return outMin;
   }
@@ -94,41 +99,6 @@ function easeInOutCubic(value: number) {
   return value < 0.5
     ? 4 * value * value * value
     : 1 - Math.pow(-2 * value + 2, 3) / 2;
-}
-
-function getFrameSource(index: number) {
-  return `/butterfly3/ezgif-frame-${String(index + 1).padStart(3, "0")}.png`;
-}
-
-function findClosestLoadedFrame(
-  images: (HTMLImageElement | null)[],
-  frameIndex: number,
-) {
-  const currentImage = images[frameIndex];
-
-  if (currentImage?.complete) {
-    return { image: currentImage, index: frameIndex };
-  }
-
-  for (let offset = 1; offset < FRAME_COUNT; offset += 1) {
-    const previousIndex = frameIndex - offset;
-    if (previousIndex >= 0) {
-      const previousImage = images[previousIndex];
-      if (previousImage?.complete) {
-        return { image: previousImage, index: previousIndex };
-      }
-    }
-
-    const nextIndex = frameIndex + offset;
-    if (nextIndex < FRAME_COUNT) {
-      const nextImage = images[nextIndex];
-      if (nextImage?.complete) {
-        return { image: nextImage, index: nextIndex };
-      }
-    }
-  }
-
-  return { image: null, index: -1 };
 }
 
 function getPanelOpacity(progress: number, start: number, end: number) {
@@ -152,7 +122,10 @@ function getPanelOpacity(progress: number, start: number, end: number) {
 
 function getProductOffset(progress: number, viewportWidth: number) {
   const maxOffset =
-    viewportWidth * (viewportWidth < MOBILE_BREAKPOINT ? PRODUCT_SHIFT_MOBILE : PRODUCT_SHIFT_DESKTOP);
+    viewportWidth *
+    (viewportWidth < MOBILE_BREAKPOINT
+      ? PRODUCT_SHIFT_MOBILE
+      : PRODUCT_SHIFT_DESKTOP);
 
   if (progress <= 0.14) {
     return 0;
@@ -170,11 +143,7 @@ function getProductOffset(progress: number, viewportWidth: number) {
     return -maxOffset;
   }
 
-  if (progress <= 1) {
-    return mapRange(progress, 0.74, 1, -maxOffset, 0);
-  }
-
-  return 0;
+  return mapRange(progress, 0.74, 1, -maxOffset, 0);
 }
 
 function getFinaleCenterBias(progress: number, viewportWidth: number) {
@@ -191,13 +160,34 @@ function getFinaleCenterBias(progress: number, viewportWidth: number) {
   return mapRange(progress, 0.78, 1, 0, maxBias);
 }
 
+function getMediaTransform(
+  progress: number,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const offsetX =
+    getProductOffset(progress, viewportWidth) +
+    getFinaleCenterBias(progress, viewportWidth);
+  const offsetY = viewportWidth < MOBILE_BREAKPOINT ? -viewportHeight * 0.03 : 0;
+  const scale =
+    viewportWidth < MOBILE_BREAKPOINT
+      ? PRODUCT_SCALE_MOBILE
+      : PRODUCT_SCALE_DESKTOP;
+
+  return `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`;
+}
+
 function StoryPanels({ progress }: { progress: number }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
       {storyPanels.map((panel) => {
         const opacity = getPanelOpacity(progress, panel.start, panel.end);
         const translateX =
-          panel.align === "left" ? -28 * (1 - opacity) : panel.align === "right" ? 28 * (1 - opacity) : 0;
+          panel.align === "left"
+            ? -28 * (1 - opacity)
+            : panel.align === "right"
+              ? 28 * (1 - opacity)
+              : 0;
         const justifyClass =
           panel.align === "left"
             ? "justify-start text-left"
@@ -250,22 +240,15 @@ function StoryPanels({ progress }: { progress: number }) {
 
 export default function JewelleryExperience() {
   const sectionRef = useRef<HTMLElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const videoReadyRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
   const animationRafRef = useRef<number | null>(null);
-  const imagesRef = useRef<(HTMLImageElement | null)[]>([]);
-  const renderedFrameRef = useRef(-1);
   const targetProgressRef = useRef(0);
   const smoothProgressRef = useRef(0);
   const [navVisible, setNavVisible] = useState(false);
-  const [framesReady, setFramesReady] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [storyProgress, setStoryProgress] = useState(0);
-
-  const frameSources = useMemo(
-    () => Array.from({ length: FRAME_COUNT }, (_, index) => getFrameSource(index)),
-    [],
-  );
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -278,7 +261,6 @@ export default function JewelleryExperience() {
 
     const update = () => {
       const section = sectionRef.current;
-
       if (!section) {
         return;
       }
@@ -325,102 +307,35 @@ export default function JewelleryExperience() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    let readyCount = 0;
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
 
-    imagesRef.current = frameSources.map((source, index) => {
-      const image = new window.Image();
-      image.decoding = "async";
-      image.src = source;
-      image.onload = () => {
-        if (cancelled) {
-          return;
-        }
+    const handleLoaded = () => {
+      video.currentTime = 0.001;
+      video.pause();
+      video.style.transform = getMediaTransform(
+        0,
+        window.innerWidth,
+        window.innerHeight,
+      );
+      videoReadyRef.current = true;
+    };
 
-        readyCount += 1;
-        setFramesReady(readyCount);
-
-        if (index === 0) {
-          renderedFrameRef.current = -1;
-        }
-      };
-      return image;
-    });
+    video.load();
+    video.addEventListener("loadedmetadata", handleLoaded);
 
     return () => {
-      cancelled = true;
-      imagesRef.current = [];
+      video.removeEventListener("loadedmetadata", handleLoaded);
     };
-  }, [frameSources]);
+  }, []);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-
-    if (!canvas) {
+    const video = videoRef.current;
+    if (!video) {
       return;
     }
-
-    const context = canvas.getContext("2d", { alpha: false });
-
-    if (!context) {
-      return;
-    }
-
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-
-    const drawFrame = (progressValue: number) => {
-      const frameIndex = Math.round(easeInOutCubic(progressValue) * (FRAME_COUNT - 1));
-      const { image, index } = findClosestLoadedFrame(imagesRef.current, frameIndex);
-
-      if (!image) {
-        return;
-      }
-
-      if (renderedFrameRef.current === index && canvas.width > 0) {
-        return;
-      }
-
-      renderedFrameRef.current = index;
-      context.fillStyle = "#000000";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
-      const deviceRatio = canvas.width / Math.max(viewportWidth, 1);
-      const fitScale = Math.min(viewportWidth / image.width, viewportHeight / image.height);
-      const presentationScale =
-        viewportWidth < MOBILE_BREAKPOINT
-          ? PRODUCT_SCALE_MOBILE
-          : PRODUCT_SCALE_DESKTOP;
-      const scale = fitScale * presentationScale * deviceRatio;
-      const drawWidth = image.width * scale;
-      const drawHeight = image.height * scale;
-      const x =
-        (canvas.width - drawWidth) / 2 +
-        (getProductOffset(progressValue, viewportWidth) +
-          getFinaleCenterBias(progressValue, viewportWidth)) *
-          deviceRatio;
-      const y =
-        viewportWidth < MOBILE_BREAKPOINT
-          ? (canvas.height - drawHeight) / 2 - canvas.height * 0.03
-          : (canvas.height - drawHeight) / 2;
-
-      context.drawImage(image, x, y, drawWidth, drawHeight);
-    };
-
-    const resizeCanvas = () => {
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
-      const { innerWidth, innerHeight } = window;
-
-      canvas.width = Math.floor(innerWidth * ratio);
-      canvas.height = Math.floor(innerHeight * ratio);
-      canvas.style.width = `${innerWidth}px`;
-      canvas.style.height = `${innerHeight}px`;
-
-      renderedFrameRef.current = -1;
-      drawFrame(smoothProgressRef.current);
-    };
 
     const animate = () => {
       const delta = targetProgressRef.current - smoothProgressRef.current;
@@ -430,22 +345,34 @@ export default function JewelleryExperience() {
         ? targetProgressRef.current
         : smoothProgressRef.current + delta * 0.12;
 
-      drawFrame(smoothProgressRef.current);
+      const progress = smoothProgressRef.current;
+
+      video.style.transform = getMediaTransform(
+        progress,
+        window.innerWidth,
+        window.innerHeight,
+      );
+
+      if (
+        videoReadyRef.current &&
+        video.duration &&
+        Number.isFinite(video.duration)
+      ) {
+        video.currentTime = Math.min(video.duration - 0.001, video.duration * progress);
+      }
+
       animationRafRef.current = window.requestAnimationFrame(animate);
     };
 
-    resizeCanvas();
+    video.pause();
     animate();
 
-    window.addEventListener("resize", resizeCanvas);
-
     return () => {
-      window.removeEventListener("resize", resizeCanvas);
       if (animationRafRef.current !== null) {
         window.cancelAnimationFrame(animationRafRef.current);
       }
     };
-  }, [framesReady]);
+  }, []);
 
   return (
     <main className="min-h-screen bg-black text-white">
@@ -458,10 +385,7 @@ export default function JewelleryExperience() {
         }}
       >
         <div className="mx-auto flex max-w-7xl items-center justify-between rounded-full border border-white/10 bg-[rgba(5,5,5,0.75)] px-4 py-3 shadow-[0_16px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:px-6">
-          <Link
-            href="#top"
-            className="text-sm font-medium tracking-[-0.02em] text-white/88"
-          >
+          <Link href="#top" className="text-sm font-medium tracking-[-0.02em] text-white/88">
             Nurs Purple
           </Link>
 
@@ -489,10 +413,7 @@ export default function JewelleryExperience() {
         </div>
       </header>
 
-      <section
-        id="top"
-        className="relative overflow-clip bg-black"
-      >
+      <section id="top" className="relative overflow-clip bg-black">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(102,61,178,0.12),transparent_34%),radial-gradient(circle_at_50%_34%,rgba(169,127,223,0.06),transparent_42%)]" />
         <div className="mx-auto flex min-h-screen max-w-7xl items-end px-6 pb-14 pt-28 sm:px-8 sm:pb-20 lg:px-12">
           <div className="max-w-4xl">
@@ -522,11 +443,20 @@ export default function JewelleryExperience() {
           <div className="absolute inset-0 bg-black" />
           <StoryPanels progress={storyProgress} />
 
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 h-full w-full"
-            aria-label="Jewellery butterfly image sequence"
-          />
+          <video
+            ref={videoRef}
+            className="absolute inset-0 h-full w-full object-contain"
+            muted
+            playsInline
+            preload="auto"
+            aria-label="Jewellery butterfly animation"
+            style={{
+              willChange: "transform",
+              transformOrigin: "center center",
+            }}
+          >
+            <source src="/butterflyvid-scrub.mp4" type="video/mp4" />
+          </video>
         </div>
       </section>
 
@@ -609,8 +539,9 @@ export default function JewelleryExperience() {
               Return to icon
             </h3>
             <p className="mt-4 text-sm leading-6 text-white/58">
-              The final motion resolves back to the signature silhouette, framing
-              the piece as both collectible object and engineered artwork.
+              The final motion resolves back to the signature silhouette,
+              framing the piece as both collectible object and engineered
+              artwork.
             </p>
           </article>
         </div>
@@ -620,33 +551,29 @@ export default function JewelleryExperience() {
         id="contact"
         className="border-t border-white/8 bg-[#050505] px-6 py-16 sm:px-8 lg:px-12"
       >
-        <div className="mx-auto flex max-w-7xl flex-col gap-8 rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-8 shadow-[0_22px_90px_rgba(0,0,0,0.38)] lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.34em] text-white/45">
-              Final Call
-            </p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.06em] text-white/92 sm:text-6xl">
-              Made to be remembered.
+        <div className="mx-auto flex max-w-7xl flex-col gap-10 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.38em] text-white/45">
+              Contact Maison
+            </span>
+            <h2 className="mt-6 text-4xl font-semibold tracking-[-0.06em] text-white/92 sm:text-5xl">
+              Bring the collection into your next presentation.
             </h2>
-            <p className="mt-5 text-base leading-7 text-white/58 sm:text-lg sm:leading-8">
-              Nurs Purple brings together sculptural beauty, quiet luxury, and a
-              sense of modern romance.
+            <p className="mt-5 max-w-xl text-sm leading-6 text-white/58 sm:text-base sm:leading-7">
+              Designed for premium showcases, campaign landings, and cinematic
+              product storytelling with a calm luxury finish.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-4">
-            <Link
-              href="#top"
-              className="inline-flex min-h-12 items-center justify-center rounded-full border border-[#6c49b7]/45 bg-[linear-gradient(135deg,rgba(94,55,167,0.18),rgba(153,114,212,0.08))] px-6 text-sm font-semibold text-white shadow-[0_0_24px_rgba(108,73,183,0.14)] transition-transform duration-300 hover:scale-[1.02]"
+          <div className="flex flex-col gap-3 text-sm text-white/60">
+            <a
+              href="mailto:hello@nurspurple.com"
+              className="transition-colors hover:text-white"
             >
-              Rewatch Reveal
-            </Link>
-            <Link
-              href="mailto:atelier@nurspurple.com"
-              className="inline-flex min-h-12 items-center justify-center rounded-full border border-white/10 px-6 text-sm font-medium text-white/70 transition-colors hover:border-white/20 hover:text-white"
-            >
-              Contact Atelier
-            </Link>
+              hello@nurspurple.com
+            </a>
+            <span>London, United Kingdom</span>
+            <span className="text-white/38">Nurs Purple Atelier</span>
           </div>
         </div>
       </footer>
