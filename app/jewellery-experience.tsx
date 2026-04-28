@@ -455,7 +455,7 @@ export default function JewelleryExperience() {
               transformOrigin: "center center",
             }}
           >
-            <source src="/butterflyvid-scrub.mp4" type="video/mp4" />
+            <source src="/butterflyvid-scrub1.mp4" type="video/mp4" />
           </video>
         </div>
       </section>
